@@ -81,6 +81,15 @@ QUIZZES: Dict[str, List[Dict[str, Any]]] = {}
 def health_check():
     return {"status": "ok"}
 
+@app.get("/")
+def root():
+    return {
+        "message": "YTQuiz API is running.",
+        "health": "/health",
+        "generateQuiz": "/generate-quiz",
+        "submitQuiz": "/submit-quiz",
+    }
+
 
 # ---------- API: generate quiz (playlist or single video) ----------
 
