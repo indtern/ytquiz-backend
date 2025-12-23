@@ -1,43 +1,35 @@
 from typing import List, Dict, Any
 from uuid import uuid4
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from youtube_utils import (
     extract_playlist_id,
-    extract_video_id,           # <-- NEW
+    extract_video_id,
     get_playlist_video_ids,
     get_video_transcript,
     get_video_title_description,
 )
 from quiz_generator import generate_questions_from_text
 
-BASE_DIR = Path(__file__).resolve().parent
+app = FastAPI(title="YTQuiz - YouTube Playlist & Video Quiz Generator API")
 
-app = FastAPI(title="YTQuiz - YouTube Playlist Quiz Generator")
-
-# CORS (open for local dev)
+# CORS (open for frontend on Netlify)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # you can restrict to your Netlify domain later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Serve static files (CSS, JS, images, HTML)
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-
 
 # ---------- Pydantic models ----------
 
 class GenerateQuizRequest(BaseModel):
-    playlistUrl: str
+    playlistUrl: str          # can be playlist URL or single video URL
     questionsPerVideo: int = 2
     maxVideos: int = 3
     difficulty: str | None = "mixed"  # "easy", "medium", "hard", "mixed"
@@ -83,26 +75,14 @@ class SubmitQuizResponse(BaseModel):
 QUIZZES: Dict[str, List[Dict[str, Any]]] = {}
 
 
-# ---------- Routes to serve pages ----------
+# ---------- Basic health check ----------
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
 
-# Landing / generator page
-@app.get("/", include_in_schema=False)
-def serve_index():
-    return FileResponse(BASE_DIR / "static" / "index.html")
-
-
-# Quiz page (redirect target after user clicks "Generate quiz")
-@app.get("/quiz", include_in_schema=False)
-def serve_quiz():
-    return FileResponse(BASE_DIR / "static" / "quiz.html")
-
-
-# ---------- API: generate quiz ----------
+# ---------- API: generate quiz (playlist or single video) ----------
 
 @app.post("/generate-quiz", response_model=GenerateQuizResponse)
 def generate_quiz(payload: GenerateQuizRequest):
@@ -117,7 +97,7 @@ def generate_quiz(payload: GenerateQuizRequest):
     - Call OpenAI ONCE to generate all questions.
     """
 
-    # 0) Clamp user inputs so they can't request a huge quiz
+    # Clamp user inputs to avoid huge quiz requests
     questions_per_video = max(1, min(payload.questionsPerVideo, 3))  # 1–3
     max_videos = max(1, min(payload.maxVideos, 5))                   # 1–5
 
