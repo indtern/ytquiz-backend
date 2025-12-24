@@ -98,7 +98,6 @@ def generate_quiz(payload: GenerateQuizRequest):
     """
     Generate quiz questions from a YouTube playlist OR a single video.
 
-    Faster version:
     - Detect whether the URL is a playlist or a single video.
     - Build a list of video_ids accordingly.
     - Collect text (transcript OR title+description) from those videos.
@@ -107,8 +106,10 @@ def generate_quiz(payload: GenerateQuizRequest):
     """
 
     # Clamp user inputs to avoid huge quiz requests
-    questions_per_video = max(1, min(payload.questionsPerVideo, 3))  # 1–3
-    max_videos = max(1, min(payload.maxVideos, 5))                   # 1–5
+    # Allow up to 10 questions per video
+    questions_per_video = max(1, min(payload.questionsPerVideo, 10))  # 1–10
+    # Allow up to 5 videos (you can raise this if you want)
+    max_videos = max(1, min(payload.maxVideos, 5))                    # 1–5
 
     raw_url = (payload.playlistUrl or "").strip()
     if not raw_url:
@@ -175,8 +176,9 @@ def generate_quiz(payload: GenerateQuizRequest):
 
     # Total number of questions = questions_per_video * number of usable videos
     total_questions = questions_per_video * len(video_texts)
-    # Global safety cap so it doesn't get huge
-    total_questions = max(1, min(total_questions, 20))
+
+    # Global safety cap so it doesn't get huge (adjust if you want larger quizzes)
+    total_questions = max(1, min(total_questions, 30))  # e.g. up to 30 questions total
 
     # 4) Call OpenAI ONCE to generate all questions
     questions_raw = generate_questions_from_text(
