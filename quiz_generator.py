@@ -20,13 +20,13 @@ def generate_questions_from_text(
     difficulty: Optional[str] = "mixed",
 ) -> List[Dict[str, Any]]:
     """
-    Call OpenAI to generate multiple-choice questions from given text.
+    Generate multiple-choice questions from text using OpenAI (gpt-4o-mini).
 
-    Returns a list of questions with:
-      - question: str
-      - options: List[str] (exactly 4)
-      - correct_index: int
-      - explanation: str
+    Strategy:
+    - Oversample (ask for more questions than needed),
+    - Enforce JSON output (response_format),
+    - Filter invalid entries,
+    - Then return up to num_questions valid questions.
     """
 
     # Truncate very long text to keep prompt manageable
@@ -64,11 +64,19 @@ def generate_questions_from_text(
         "for students, based ONLY on the provided study material."
     )
 
+    # Target number of questions requested by caller
+    target_questions = max(1, int(num_questions))
+
+    # Oversample: ask the model for more questions than we need,
+    # then we will select the first target_questions valid ones.
+    overshoot = max(target_questions + 3, target_questions * 2)
+    overshoot = min(overshoot, 30)  # absolute safety cap
+
     user_prompt = f"""
 You are given study material (transcript or text) from one or more video lessons.
 
 Your task:
-- Write {num_questions} HIGH-QUALITY multiple-choice questions that help students
+- Write {overshoot} HIGH-QUALITY multiple-choice questions that help students
   truly understand and think about the concepts in the text.
 
 VERY IMPORTANT CONSTRAINTS:
@@ -112,6 +120,12 @@ VERY IMPORTANT CONSTRAINTS:
    - Difficulty setting: {difficulty}
    - {diff_instruction}
 
+7) EXACT COUNT
+   - You MUST return EXACTLY {overshoot} questions in the JSON.
+   - If the study material seems short or repetitive, you must still create {overshoot}
+     distinct, non-duplicate questions by focusing on nuances, comparisons,
+     typical misconceptions, or implications of the content.
+
 Study material (use ONLY this):
 
 \"\"\"{text}\"\"\"
@@ -130,33 +144,48 @@ Return JSON ONLY in this exact structure (no backticks, no extra text):
 }}
 """
 
+    # Use gpt-4o-mini (cheap) but enforce JSON output
     response = client.chat.completions.create(
-        # For best quality, use gpt-4o; for cheaper but lower quality, use gpt-4o-mini
-        model="gpt-4o-mini",  # <- change to "gpt-4o-mini" if you want cheaper generation
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.2,  # lower temperature = more focused, less random
+        temperature=0.2,
+        response_format={"type": "json_object"},
     )
 
-    content = response.choices[0].message.content.strip()
+    content = response.choices[0].message.content
 
-    # Attempt to parse JSON
+    # Parse JSON
     try:
         data = json.loads(content)
-        questions = data.get("questions", [])
-        cleaned: List[Dict[str, Any]] = []
-
-        for q in questions:
-            if (
-                isinstance(q.get("question"), str)
-                and isinstance(q.get("options"), list)
-                and len(q["options"]) == 4
-                and isinstance(q.get("correct_index"), int)
-            ):
-                cleaned.append(q)
-        return cleaned
     except json.JSONDecodeError:
-        # If parsing fails, return empty list
         return []
+
+    questions = data.get("questions", [])
+    cleaned: List[Dict[str, Any]] = []
+
+    for q in questions:
+        if (
+            isinstance(q.get("question"), str)
+            and isinstance(q.get("options"), list)
+            and len(q["options"]) == 4
+            and isinstance(q.get("correct_index"), int)
+            and 0 <= q["correct_index"] < 4
+        ):
+            cleaned.append(
+                {
+                    "question": q["question"],
+                    "options": q["options"],
+                    "correct_index": q["correct_index"],
+                    "explanation": q.get("explanation", ""),
+                }
+            )
+
+    # If we got at least target_questions valid ones, just return the first target_questions
+    if len(cleaned) >= target_questions:
+        return cleaned[:target_questions]
+
+    # Otherwise return whatever we got (still could be fewer if the content is very poor)
+    return cleaned
